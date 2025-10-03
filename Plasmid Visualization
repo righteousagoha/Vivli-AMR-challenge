@@ -1,0 +1,202 @@
+# mob_suite_canada_mexico_plots.R
+# Consolidated working code from the Canada vs Mexico session
+# Requires: tidyverse, janitor, gghalves
+# install.packages(c("tidyverse","janitor"))
+# remotes::install_github("haleyjeppson/gghalves")  # if gghalves not on CRAN in your R
+library(tidyverse)
+library(janitor)
+library(gghalves)
+
+# --------------------------
+# 0) file paths - change if needed
+canada_fp <- "C:/Users/Admin/OneDrive/Desktop/Bioinformatics/Vivli/merged_mobtyper_results_canada.tsv"
+mexico_fp <- "C:/Users/Admin/OneDrive/Desktop/Bioinformatics/Vivli/merged_mobtyper_results_mexico.tsv"
+outdir <- "plots_output"
+dir.create(outdir, showWarnings = FALSE, recursive = TRUE)
+
+# colors you requested
+col_canada <- "#021330"   # Canada
+col_mexico <- "#023020"   # Mexico
+
+# --------------------------
+# 1) read + normalize headers
+can <- read_tsv(canada_fp, show_col_types = FALSE) %>% clean_names()
+mex <- read_tsv(mexico_fp, show_col_types = FALSE) %>% clean_names()
+
+# bind
+all_df <- bind_rows(
+  can %>% mutate(region = "Canada"),
+  mex %>% mutate(region = "Mexico")
+)
+
+# --------------------------
+# 2) find the mobility column robustly (handles messy headers like 'non_mobilizable', 'mobilizable', etc.)
+mob_cols <- names(all_df)[str_detect(names(all_df), regex("mobil|conjug|predicted_mob", ignore_case = TRUE))]
+if(length(mob_cols) == 0){
+  stop("No mobility-like column found. Inspect names(all_df).")
+}
+message("mobility-like columns found: ", paste(mob_cols, collapse = ", "))
+
+# create single standard column 'predicted_mobility':
+# pick first non-NA and not "-" value across the candidate columns
+mob_from_row <- function(row_vals){
+  row_vals <- row_vals[!is.na(row_vals)]
+  if(length(row_vals) == 0) return(NA_character_)
+  row_vals <- row_vals[row_vals != "-"]
+  if(length(row_vals) == 0) return(NA_character_)
+  # sometimes values might contain multiple things; take the first token (safest)
+  first <- row_vals[1]
+  first <- str_trim(first)
+  tolower(first)
+}
+if(length(mob_cols) == 1){
+  all_df <- all_df %>% mutate(predicted_mobility = tolower(na_if(!!sym(mob_cols), "-")))
+} else {
+  # apply rowwise
+  all_df <- all_df %>%
+    mutate(.rowid = row_number()) %>%
+    rowwise() %>%
+    mutate(predicted_mobility = mob_from_row(c_across(all_of(mob_cols)))) %>%
+    ungroup() %>%
+    select(-.rowid)
+}
+
+# normalize a few common variants
+all_df <- all_df %>%
+  mutate(predicted_mobility = case_when(
+    is.na(predicted_mobility) ~ NA_character_,
+    str_detect(predicted_mobility, "conjug") ~ "conjugative",
+    str_detect(predicted_mobility, "mobiliz") ~ "mobilizable",
+    str_detect(predicted_mobility, "non") ~ "non-mobilizable",
+    TRUE ~ predicted_mobility
+  ))
+
+
+# --------------------------
+# 3) Basic counts table (region x mobility)
+counts <- all_df %>%
+  filter(!is.na(predicted_mobility)) %>%
+  count(region, predicted_mobility) %>%
+  arrange(predicted_mobility, region)
+
+print(counts)
+
+# ensure factor ordering
+mob_levels <- c("conjugative", "mobilizable", "non-mobilizable")
+counts <- counts %>%
+  mutate(predicted_mobility = factor(predicted_mobility, levels = mob_levels),
+         region = factor(region, c("Canada","Mexico")))
+
+# --------------------------
+# 4) Horizontal bar plot with numbers close to each bar
+library(ggplot2)
+p_bar <- ggplot(counts, aes(x = predicted_mobility, y = n, fill = region)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.35) +
+  coord_flip() +
+  scale_fill_manual(values = c("Canada" = col_canada, "Mexico" = col_mexico)) +
+  geom_text(aes(label = n),
+            position = position_dodge(width = 0.7),
+            hjust = -0.1, size = 3) +   # numbers just outside bars
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = "Predicted mobility", y = "Count (plasmids)", title = "Plasmid mobility counts: Canada vs Mexico") +
+  theme_classic(base_size = 14) +
+  theme(panel.background = element_rect(fill = "white", colour = NA),
+        panel.grid = element_blank(),
+        legend.title = element_blank(),
+        legend.position = "top")
+
+# save
+ggsave(file.path(outdir, "mobility_counts_horizontal.png"), p_bar, dpi = 300, width = 7, height = 4, bg = "white")
+
+# --------------------------
+# 5) Half-violin + box + jitter comparing plasmid sizes per mobility & region
+# need a numeric size column (in bp -> convert to kb)
+if(!"size" %in% names(all_df)){
+  stop("No 'size' column found. Cannot plot size distributions.")
+}
+plasmids <- all_df %>%
+  filter(!is.na(predicted_mobility), predicted_mobility %in% mob_levels) %>%
+  mutate(mobility = factor(predicted_mobility, levels = mob_levels),
+         size_kb = size / 1000,
+         region = factor(region, c("Canada","Mexico")))
+
+# half violin requires drawing each region separately so we use two layers
+p_violin <- ggplot() +
+  # Canada half-violin on left
+  geom_half_violin(data = filter(plasmids, region == "Canada"),
+                   aes(x = mobility, y = size_kb, fill = region),
+                   side = "l", alpha = 0.6, trim = TRUE, width = 0.9) +
+  # Mexico half-violin on right
+  geom_half_violin(data = filter(plasmids, region == "Mexico"),
+                   aes(x = mobility, y = size_kb, fill = region),
+                   side = "r", alpha = 0.6, trim = TRUE, width = 0.9) +
+  # central boxplot
+  geom_boxplot(data = plasmids, aes(x = mobility, y = size_kb),
+               width = 0.12, outlier.size = 0.7, fill = "white", color = "black") +
+  # jittered points
+  geom_jitter(data = plasmids, aes(x = mobility, y = size_kb, color = region),
+              width = 0.12, size = 1.2, alpha = 0.7) +
+  scale_fill_manual(values = c("Canada" = col_canada, "Mexico" = col_mexico)) +
+  scale_color_manual(values = c("Canada" = col_canada, "Mexico" = col_mexico)) +
+  labs(x = "Mobility type", y = "Plasmid size (kb)",
+       title = "Plasmid size distribution by mobility (half-violin + box + jitter)") +
+  theme_classic(base_size = 14) +
+  theme(panel.background = element_rect(fill = "white", colour = NA),
+        panel.grid = element_blank(),
+        legend.position = "top")
+
+ggsave(file.path(outdir, "half_violin_box_jitter_size_by_mobility.png"), p_violin, dpi = 300, width = 8, height = 5, bg = "white")
+
+# --------------------------
+# 6) Relaxase type vs mobility — one plot per region (split + saved separately)
+# relaxase column name may be 'relaxase_type_s' or similar; find it robustly
+relaxase_col <- names(all_df)[str_detect(names(all_df), "^relaxase|relaxase_type", ignore_case = TRUE)]
+if(length(relaxase_col) == 0){
+  warning("No relaxase column found. Skipping relaxase plots.")
+} else {
+  relax_col <- relaxase_col[1]
+  # separate comma-separated relaxase types into rows
+  relax_df <- all_df %>%
+    select(sample_id, region, predicted_mobility, relaxase = all_of(relax_col)) %>%
+    filter(!is.na(predicted_mobility), predicted_mobility %in% mob_levels) %>%
+    mutate(relaxase = na_if(relaxase, "-")) %>%
+    filter(!is.na(relaxase)) %>%
+    separate_rows(relaxase, sep = ",") %>%
+    mutate(relaxase = str_trim(relaxase))
+
+  # get counts per region x mobility x relaxase
+  relax_counts <- relax_df %>%
+    count(region, predicted_mobility, relaxase, name = "n") %>%
+    arrange(region, predicted_mobility, desc(n))
+
+  # If there are many relaxase categories, keep top N (others collapse to "other")
+  topN <- 10
+  relax_counts <- relax_counts %>%
+    group_by(region) %>%
+    mutate(rank_rel = dense_rank(desc(n))) %>%
+    ungroup() %>%
+    mutate(relaxase_plot = if_else(rank_rel <= topN, relaxase, "other")) %>%
+    group_by(region, predicted_mobility, relaxase_plot) %>%
+    summarize(n = sum(n), .groups = "drop")
+
+  # plot per region
+  for(r in unique(relax_counts$region)){
+    dsub <- relax_counts %>% filter(region == r)
+    p_rel <- ggplot(dsub, aes(x = predicted_mobility, y = n, fill = relaxase_plot)) +
+      geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+      labs(title = paste0(r, ": Relaxase families by mobility"),
+           x = "Mobility", y = "Count", fill = "Relaxase") +
+      theme_classic(base_size = 13) +
+      theme(panel.background = element_rect(fill = "white", colour = NA),
+            panel.grid = element_blank(),
+            axis.text.x = element_text(angle = 15, hjust = 1))
+    fname <- file.path(outdir, paste0("relaxase_by_mobility_", r, ".png"))
+    ggsave(fname, p_rel, dpi = 300, width = 9, height = 4.5, bg = "white")
+  }
+}
+
+# --------------------------
+# 7) Save the counts table for quick reference
+write_csv(counts, file.path(outdir, "mobility_counts_by_region.csv"))
+
+message("All plots & summary written to: ", normalizePath(outdir))
