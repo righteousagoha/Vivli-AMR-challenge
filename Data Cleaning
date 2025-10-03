@@ -1,0 +1,51 @@
+#libraries
+
+#library("cowplot")  
+library("openxlsx")
+library("readxl")
+#library("viridis")
+library("tidyverse")
+library("ggplot2")
+library("knitr")
+#library("plotrix")
+library("readxl")
+library('openxlsx')
+# Load dplyr
+library('dplyr')
+
+library(tidyr)
+library(rstatix)
+library(ggpubr)
+library(dplyr)
+library(writexl)
+library(leaflet)
+library(viridis)
+
+#load data
+data <- read_excel("C:/Users/mmsgh/Downloads/Vivli/2025_03_11 atlas_antibiotics.xlsx")
+#filter for Acinetobacter baumannii
+ab_data <- data %>% filter(Species == "Acinetobacter baumannii")
+
+# Define antibiotic columns
+drugs <- c(
+  "Amikacin_I", "Cefepime_I", "Ceftazidime_I", 
+  "Ceftriaxone_I", "Levofloxacin_I", "Meropenem_I", 
+  "Minocycline_I", "Piperacillin tazobactam_I"
+)
+
+# Define countries in North America (not used in this snippet, but retained)
+north_america_countries <- c(
+  "Canada", "Costa Rica", "Dominican Republic", "El Salvador", 
+  "Guatemala", "Honduras", "Jamaica", "Mexico", "Nicaragua", 
+  "Panama", "Puerto Rico", "United States"
+)
+
+# Replace NAs with "Undetermined" in antibiotic columns
+new_data <- ab_data %>%
+  mutate(across(
+    all_of(drugs),
+    ~ ifelse(is.na(.), "Undetermined", .)
+  ))
+
+# Preview the result
+head(new_data)
