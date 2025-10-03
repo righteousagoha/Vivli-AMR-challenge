@@ -1,0 +1,541 @@
+# Filter and summarize only for North American countries
+resistance_summary <- new_data %>%
+  filter(Country %in% north_america_countries) %>%
+  group_by(Country) %>%   
+  summarise(across(
+    all_of(drugs_new),
+    ~ {
+      total_samples = sum(. != "Undetermined")
+      resistant_cases = sum(. == "Resistant")
+      round(resistant_cases / total_samples * 100, 1)
+    }
+  ), .groups = "drop")  # optional: removes the grouping
+
+write.csv(resistance_summary, "C:/Users/mmsgh/Downloads/Vivli/resistance_summary_north_america.csv", row.names = FALSE)
+
+NORTH_AMEICA <- data %>%
+  filter(Country %in% north_america_countries)
+
+write.csv(NORTH_AMEICA, "C:/Users/mmsgh/Downloads/Vivli/NORTH_AMERICA.csv", row. Names = FALSE)
+
+# Specify countries to keep
+selected_countries <- c("Canada", "Mexico")
+
+# Filter and summarize resistance prevalence for Canada and Mexico
+resistance_summary_selected <- new_data %>%
+  filter(Country %in% selected_countries) %>%
+  group_by(Country) %>%
+  summarise(across(
+    all_of(drugs_new),
+    ~ {
+      total_samples = sum(. != "Undetermined")
+      resistant_cases = sum(. == "Resistant")
+      if (total_samples == 0) NA_real_ else round(resistant_cases / total_samples * 100, 1)
+    }
+  ), .groups = "drop")
+
+# Convert to long format
+resistance_long <- resistance_summary_selected %>%
+  pivot_longer(cols = all_of(drugs_new), names_to = "Drug", values_to = "Prevalence") %>%
+  mutate(
+    Drug = factor(Drug, levels = drugs_new),
+    Country = factor(Country, levels = selected_countries)
+  )
+
+
+# Define short drug labels
+drug_labels <- c(
+  "Amikacin_I" = "AMK",
+  "Cefepime_I" = "CEFEP",
+  "Ceftazidime_I" = "CEFTAZ",
+  "Ceftriaxone_I" = "CRT",
+  "Levofloxacin_I" = "LVX",
+  "Meropenem_I" = "MEM",
+  "Minocycline_I" = "MIN",
+  "Piperacillin tazobactam_I" = "PPQ"
+)
+resistance_long$DrugLabel <- drug_labels[as.character(resistance_long$Drug)]
+
+
+# Plot horizontal bar plot with no gridlines
+ggplot(resistance_long, aes(x = DrugLabel, y = Prevalence, fill = Country)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8)) +
+  coord_flip() +
+  labs(
+    title = "Antibiotic Resistance Prevalence (%) in Canada and Mexico",
+    x = "Drug",
+    y = "Resistance Prevalence (%)",
+    fill = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 12, face = "bold"),
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom",
+    panel.grid = element_blank() # This line removes all gridlines [4]
+  )
+
+region_coords <- read_excel("C:/Users/mmsgh/Downloads/Vivli/Vivlinorth_america_lat_long.xlsx")
+region_coords$longitude <- as.numeric(as.character(region_coords$longitude))
+region_coords$latitude <- as.numeric(as.character(region_coords$latitude))
+
+drugs <- c(
+  "Amikacin_I" = "AMK",
+  "Cefepime_I" = "CEFEP",
+  "Ceftazidime_I" = "CEFTAZ",
+  "Ceftriaxone_I" = "CRT",
+  "Levofloxacin_I" = "LVX",
+  "Meropenem_I" = "MEM",
+  "Minocycline_I" = "MIN",
+  "Piperacillin tazobactam_I" = "PPQ"
+)
+
+# Create directory for heatmaps if missing
+dir.create("heatmaps", showWarnings = FALSE)
+
+generate_heatmap <- function(region_name, values) {
+  drug_labels <- drugs[names(values)]
+  
+  df <- data.frame(
+    Drug = factor(names(values), levels = names(values)),
+    Prevalence = as.numeric(values),
+    Label = drug_labels
+  )
+  
+  df$DisplayValue <- ifelse(df$Prevalence == 0, 0.1, df$Prevalence)
+  
+  p <- ggplot(df, aes(x = Drug, y = 1, fill = DisplayValue)) +
+    annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf,
+             fill = "white", color = "black", size = 0.5, alpha = 0.2) +
+    geom_tile(color = "white", width = 0.6, height = 0.9) +
+    geom_text(aes(label = Label), position = position_nudge(y = -0.5),
+              angle = 45, hjust = 1, vjust = 1, size = 5, color = "black") +
+    scale_fill_viridis_c(
+      limits = c(0, 100),
+      option = "magma",
+      direction = -1,
+      begin = 0.1,
+      end = 0.9,
+      na.value = "lightgray"
+    ) +
+    theme_void() +
+    theme(
+      legend.position = "none",
+      plot.margin = margin(0.2, 0, 1.8, 0, "cm"),
+      panel.background = element_blank()
+    ) +
+    coord_cartesian(clip = "off")
+  
+  ggsave(
+    filename = paste0("C:/Users/mmsgh/Downloads/Vivli/heatmaps/", region_name, ".png"),
+    plot = p,
+    width = 2.2,
+    height = 1.5,
+    dpi = 150,
+    bg = "transparent"
+  )
+}
+
+# If you want to generate by Country (not Region), use resistance_summary; 
+# adjust variable names accordingly.
+
+# Example: generate heatmaps for each country in resistance_summary
+for (i in 1:nrow(resistance_summary)) {
+  country <- resistance_summary$Country[i]
+  values <- resistance_summary[i, drugs_new]
+  generate_heatmap(country, values)
+}
+
+# Filter region_coords to only those countries you have heatmaps for
+valid_countries <- intersect(resistance_summary$Country, region_coords$Country)
+region_coords <- region_coords %>%
+  filter(Country %in% valid_countries)
+
+heatmap_icons <- icons(
+  iconUrl = paste0("heatmaps/", region_coords$Country, ".png"),
+  iconWidth = 90,
+  iconHeight = 50
+)
+
+amr_data <- NORTH_AMERICA
+colnames(amr_data)
+# Select only interpretation columns (those ending with _I)
+interpretation_cols <- names(amr_data)[grepl("_I$", names(amr_data))]
+
+# Gather data to long format
+amr_long <- amr_data %>%
+  select("Isolate Id", all_of(interpretation_cols)) %>%
+  pivot_longer(cols = interpretation_cols, 
+               names_to = "Antibiotic", 
+               values_to = "Interpretation") %>%
+  mutate(Antibiotic = gsub("_I$", "", Antibiotic))  # clean names
+
+# Calculate proportions by antibiotic and interpretation
+resistance_freq <- amr_long %>%
+  filter(!is.na(Interpretation)) %>%
+  group_by(Antibiotic, Interpretation) %>%
+  summarise(Count = n()) %>%
+  mutate(Percent = Count / sum(Count) * 100)
+
+# 1. Calculate total n for each antibiotic
+antibiotic_totals <- resistance_freq %>%
+  group_by(Antibiotic) %>%
+  summarise(Total = sum(Count))
+
+# 2. Create named vector for relabeling with totals in brackets
+antibiotic_labels <- setNames(
+  paste0(antibiotic_totals$Antibiotic, " (", antibiotic_totals$Total, ")"),
+  antibiotic_totals$Antibiotic
+)
+
+# 3. Update your ggplot with new labels
+ggplot(resistance_freq, aes(x = Antibiotic, y = Percent, fill = Interpretation)) + 
+  geom_col(position = "stack") +
+  coord_flip() +
+  scale_x_discrete(labels = antibiotic_labels) +     # Use this line for coord_flip (y axis if no flip)
+  scale_fill_manual(values = c("Susceptible" = "#1f77b4", 
+                               "Intermediate" = "#2ca02c", 
+                               "Resistant" = "#d62728")) +
+  theme_minimal() +
+  labs(title = "Resistance Profile by Antibiotic",
+       y = "",
+       x = "Antibiotic (n tested)",
+       fill = "Phenotype") +
+  theme(
+    panel.border = element_blank(), 
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  ) 
+
+amr_country_resistance <- amr_long %>%
+  filter(Antibiotic == "Amikacin", !is.na(Interpretation)) %>%
+  left_join(amr_data %>% select("Isolate Id", Country), by = "Isolate Id") %>%
+  group_by(Country, Interpretation) %>%
+  summarise(Count = n()) %>%
+  mutate(Percent = Count / sum(Count) * 100)
+
+ggplot(amr_country_resistance, aes(x = Country, y = Percent, fill = Interpretation)) + 
+  geom_col(position = "stack") +
+  scale_fill_manual(values = c("Susceptible" = "#1f77b4", 
+                               "Intermediate" = "#2ca02c", 
+                               "Resistant" = "#d62728")) +
+  theme_minimal() +
+  labs(title = "Amikacin Resistance by Country",
+       y = "Percentage of Isolates",
+       x = "",
+       fill = "Interpretation") + theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    panel.border = element_blank(), 
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  ) 
+
+interpretation_cols <- names(amr_data)[grepl("_I$", names(amr_data))]
+
+amr_long <- amr_data %>%
+  select(`Isolate Id`, Country, all_of(interpretation_cols)) %>%
+  pivot_longer(cols = all_of(interpretation_cols),
+               names_to = "Antibiotic",
+               values_to = "Interpretation") %>%
+  mutate(Antibiotic = gsub("_I$", "", Antibiotic))
+
+amr_country_resistance <- amr_long %>%
+  filter(Antibiotic == "Metronidazole", !is.na(Interpretation)) %>%
+  group_by(Country, Interpretation) %>%
+  summarise(Count = n(), .groups = 'drop') %>%
+  mutate(Percent = Count / sum(Count) * 100)
+ggplot(amr_country_resistance, aes(x = Country, y = Percent, fill = Interpretation)) + 
+  geom_col(position = "stack") +
+  scale_fill_manual(values = c("Susceptible" = "#1f77b4", 
+                               "Intermediate" = "#2ca02c", 
+                               "Resistant" = "#d62728")) +
+  theme_minimal() +
+  labs(title = "Metronidazole Resistance by Country",
+       y = "Percentage of Isolates",
+       x = "",
+       fill = "Interpretation") + 
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 14),
+    panel.border = element_blank(), 
+    legend.position = "right",
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 12)
+  )
+
+# 1. Identify interpretation columns
+drug_cols <- names(amr_data)[grepl("_I$", names(amr_data))]
+
+# 2. Convert all to character (in case there's a type mix)
+amr_data <- amr_data %>%
+  mutate(across(all_of(drug_cols), as.character))
+
+# 3. Pivot data longer
+amr_long <- amr_data %>%
+  select(Country, all_of(drug_cols)) %>%
+  pivot_longer(cols = all_of(drug_cols),
+               names_to = "Drug",
+               values_to = "Interpretation") %>%
+  mutate(Drug = gsub("_I$", "", Drug))
+
+# 4. Summarise to get counts and susceptibility proportion
+suscept_country <- amr_long %>%
+  group_by(Drug, Country) %>%
+  summarise(
+    Susceptible = sum(Interpretation == "Susceptible", na.rm = TRUE),
+    Total = sum(!is.na(Interpretation)),
+    Prop_S = ifelse(Total > 0, Susceptible / Total, NA_real_)
+  ) 
+
+suscept_country <- suscept_country %>%
+  # Replace NA Prop_S with 0
+  mutate(Prop_S = ifelse(is.na(Prop_S), 0, Prop_S)) %>%
+  # Keep only rows where Prop_S > 0 (i.e., at least one susceptible isolate)
+  filter(Prop_S > 0)
+
+
+
+# Optional: order drugs/factors for visual clarity
+suscept_country$Drug <- factor(suscept_country$Drug, levels = unique(suscept_country$Drug))
+suscept_country$Country <- factor(suscept_country$Country, levels = unique(suscept_country$Country))
+
+ggplot(suscept_country, aes(x = Country, y = Drug, fill = Prop_S, label = paste0(round(Prop_S, 2)))) +
+  geom_tile() +
+  geom_text(size = 3) +
+  scale_fill_gradient2(low = "#d62728", mid = "white", high = "#89CFF0", midpoint = 0.5,
+                       limits = c(0, 1), na.value = 'grey90', 
+                       name = "Proportion\nSusceptible") +
+  theme_minimal(base_size = 12) +
+  labs(
+    x = "Country",
+    y = "Antibiotic",
+    title = ""
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face="bold"),
+    axis.text.y = element_text(face="bold")
+  )
+
+# Identify interpretation columns that end with _I
+interpretation_cols <- names(amr_data)[grepl("_I$", names(amr_data))]
+
+# Pivot to long data: isolate ID, year, species, antibiotic, interpretation
+amr_long <- amr_data %>%
+  select(Species, Year, all_of(interpretation_cols)) %>%
+  pivot_longer(
+    cols = all_of(interpretation_cols),
+    names_to = "Antibiotic",
+    values_to = "Interpretation"
+  ) %>%
+  mutate(Antibiotic = gsub("_I$", "", Antibiotic))
+
+resistance_summary <- amr_long %>%
+  filter(!is.na(Interpretation)) %>%
+  group_by(Species, Year) %>%
+  summarise(
+    Resistant = sum(Interpretation == "Resistant"),
+    Total = n(),
+    Resistance_Rate = Resistant / Total,
+    .groups = "drop"
+  )
+top_species_per_year <- resistance_summary %>%
+  group_by(Year) %>%
+  slice_max(Resistance_Rate, n = 3) %>%
+  arrange(Year, desc(Resistance_Rate))
+
+# Get top species overall by mean resistance rate
+top_species <- resistance_summary %>%
+  group_by(Species) %>%
+  summarise(Mean_Resistance = mean(Resistance_Rate, na.rm = TRUE)) %>%
+  slice_max(Mean_Resistance, n = 6) %>%
+  pull(Species)
+
+# Step 1: Calculate total isolates per year from the original data
+total_per_year <- amr_data %>%
+  group_by(Year) %>%
+  summarise(Total = n(), .groups = "drop")
+
+# Step 2: Calculate resistance summary per Species and Year (example)
+resistance_summary <- amr_long %>%
+  filter(!is.na(Interpretation)) %>%
+  group_by(Species, Year) %>%
+  summarise(
+    Resistant = sum(Interpretation == "Resistant"),
+    TotalTested = n(),
+    Resistance_Rate = Resistant / TotalTested,
+    .groups = "drop"
+  )
+
+# Step 3: Join the total isolates per year to the resistance summary
+resistance_summary <- resistance_summary %>%
+  left_join(total_per_year, by = "Year")
+
+# Step 4: Now create Year_label with the Total count from step 1
+resistance_summary <- resistance_summary %>%
+  mutate(Year_label = paste0(Year, " (", Total, ")"))
+
+# Step 3: Use Year_label for plotting or presentation instead of Year
+ggplot(resistance_summary %>% filter(Species %in% top_species), 
+       aes(x = Year_label, y = Resistance_Rate, color = Species, group = Species)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(
+    title = "Resistance Trends Over Years with Total Isolates per Year",
+    x = "Year (Total isolates tested)",
+    y = "Prevalence",
+    color = "Species"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),  # remove major gridlines
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 0.5),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 12),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 13),
+    legend.text = element_text(size = 12)
+  )
+
+# Count isolates per species
+top_species <- amr_data %>%
+  count(Species, sort = TRUE) %>%
+  slice_head(n = 9) %>%  # top 5 species
+  pull(Species)
+
+# Filter for top species
+top_species_data <- amr_data %>%
+  filter(Species %in% top_species)
+
+# Filter for Acinetobacter baumannii only
+acb_data <- amr_data %>%
+  filter(Species == "Acinetobacter baumannii")
+
+ggplot(top_species_data, aes(x = "Age Group", fill = Species)) +
+  geom_bar(position = "dodge") +
+  labs(
+    title = "Counts of Isolates by Age Group for Top Species",
+    x = "Age Group",
+    y = "Number of Isolates",
+    fill = "Species"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),  # remove major gridlines
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+acb_data <- amr_data %>%
+  filter(Species == "Acinetobacter baumannii") %>%
+  rename(Age_Group = `Age Group`)
+
+ggplot(acb_data, aes(x = Age_Group)) +
+  geom_bar(fill = "#1f77b4") +
+  labs(
+    title = "Age Group Distribution of Acinetobacter baumannii Isolates",
+    x = "Age Group",
+    y = "Number of Isolates"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),  # remove major gridlines
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+# Your custom color vector (using only the hex codes you gave, names not used here)
+custom_colors <- c(
+  "#ff7f0e",  # orange
+  "#2ca02c",  # green
+  "#17becf",  # cyan
+  "#666666",  # gray
+  "#d62728",  # red
+  "#6A5ACD",  # slate blue
+  "#1f77b4",  # blue
+  "#bccad0",   # light gray,
+  "brown",
+  "black"
+)
+
+# Filter data for Acinetobacter baumannii
+acb_data <- amr_data %>%
+  filter(Species == "Acinetobacter baumannii")
+
+# Get top 10 Speciality and Source categories
+top_specialities <- acb_data %>%
+  count(Speciality, sort = TRUE) %>%
+  slice_head(n = 10) %>%
+  pull(Speciality)
+
+top_sources <- acb_data %>%
+  count(Source, sort = TRUE) %>%
+  slice_head(n = 10) %>%
+  pull(Source)
+
+# Filter for only top 10 Speciality and Source
+acb_top_data <- acb_data %>%
+  filter(Speciality %in% top_specialities,
+         Source %in% top_sources) %>%
+  mutate(
+    Speciality = fct_infreq(factor(Speciality)),
+    Source = fct_infreq(factor(Source))
+  )
+
+# Assign colors for Speciality and Source by recycling custom colors (limited colors, so repeated)
+speciality_colors <- setNames(
+  rep(custom_colors, length.out = length(top_specialities)),
+  levels(acb_top_data$Speciality)
+)
+
+source_colors <- setNames(
+  rep(custom_colors, length.out = length(top_sources)),
+  levels(acb_top_data$Source)
+)
+
+
+# Plot 1: Speciality on x-axis, fill by Source with source_colors
+ggplot(acb_top_data, aes(x = Speciality, fill = Source)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = source_colors) +
+  labs(
+    title = "Top 10 Specialities and Source Distribution of Acinetobacter baumannii Isolates",
+    x = "Speciality",
+    y = "Number of Isolates",
+    fill = "Source"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+# Plot 2: Source on x-axis, fill by Speciality with speciality_colors
+ggplot(acb_top_data, aes(x = Source, fill = Speciality)) +
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = speciality_colors) +
+  labs(
+    title = "Top 10 Sources and Speciality Distribution of Acinetobacter baumannii Isolates",
+    x = "Source",
+    y = "Number of Isolates",
+    fill = "Speciality"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
