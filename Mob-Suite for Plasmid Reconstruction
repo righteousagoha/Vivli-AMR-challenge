@@ -1,0 +1,21 @@
+
+FASTA_DIR="/home/waccbip/Documents/Righteous/Vivli/Canada/ncbi_dataset/data"   # adjust for Mexico when needed
+OUT_ROOT="/home/waccbip/Documents/Righteous/Vivli/mob_typer_results/canada"
+THREADS=10
+
+mkdir -p "$OUT_ROOT"
+cd "$FASTA_DIR" || exit 1
+
+for f in *.fasta; do
+  sample="${f%.fasta}"
+  outdir="${OUT_ROOT}/${sample}"
+  mkdir -p "$outdir"
+  echo "=== RUN: $sample ==="
+  mob_typer \
+    -i "$FASTA_DIR/$f" \
+    -o "$outdir/mobtyper_results.txt" \
+    -a "$outdir" \
+    -n "$THREADS" \
+    --debug |& tee "$outdir/mobtyper_run.log"
+  echo "=== DONE: $sample (exit:$?) ==="
+done
